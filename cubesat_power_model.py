@@ -1,83 +1,124 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-# ----------------------------
-# ASSUMED SYSTEM PARAMETERS
-# ----------------------------
+# =========================
+# ORBIT PARAMETERS
+# =========================
+orbit_period_min = 95
+dt = 1  # minute resolution
+t = np.arange(0, orbit_period_min, dt)
 
-orbit_minutes = 90
-dt = 1  # time step in minutes
-time = np.arange(0, orbit_minutes, dt)
+sunlight_duration = 60  # min
+eclipse_duration = orbit_period_min - sunlight_duration
 
-# Solar array
-solar_max_power = 23  # Watts (peak in sunlight)
+# =========================
+# SOLAR ARRAY MODEL
+# =========================
+solar_flux = 1361  # W/m^2
+area = 0.06  # m^2 (3U body-mounted estimate)
+efficiency = 0.28
+degradation = 0.80
+system_loss = 0.90
 
-# Battery
+P_max = solar_flux * area * efficiency * degradation * system_loss
+
+# =========================
+# BATTERY MODEL
+# =========================
 battery_capacity_Wh = 20
-battery_energy = 15  # start at 75%
+battery_energy = 0.8 * battery_capacity_Wh
+battery_efficiency = 0.92
 
-# Loads (W)
-safe_mode = 5
-nominal_mode = 15
-downlink_mode = 25
+# =========================
+# LOAD MODEL (REALISTIC MODES)
+# =========================
 
-# Operating schedule (simple assumption)
-def get_mode(t):
-    if 30 <= t < 40:
-        return downlink_mode
+def in_sunlight(time):
+    return time < sunlight_duration
+
+def get_load(time):
+    # Always-on systems
+    base = 2 + 3 + 1  # OBC + ADCS + idle comms
+
+    # Communication window
+    if 20 <= time < 35:
+        comms = 8
     else:
-        return nominal_mode
+        comms = 0.5
 
-# Sunlight vs eclipse
-def in_sunlight(t):
-    return t < 60  # 60 min sun, 30 min eclipse
+    # Payload duty cycle
+    if 50 <= time < 55:
+        payload = 5
+    else:
+        payload = 0
 
-# ----------------------------
+    return base + comms + payload
+
+# =========================
+# SOLAR INCIDENCE MODEL
+# =========================
+def solar_incidence_factor(time):
+    if not in_sunlight(time):
+        return 0
+
+    # simple cosine variation over sunlight period
+    angle = (time / sunlight_duration) * np.pi
+    return max(0, np.cos(angle))
+
+# =========================
 # STORAGE
-# ----------------------------
-battery_history = []
-solar_history = []
-load_history = []
+# =========================
+soc = []
+solar_trace = []
+load_trace = []
 
-# ----------------------------
+# =========================
 # SIMULATION LOOP
-# ----------------------------
-for t in time:
+# =========================
+for i in t:
 
-    # Solar power
-    if in_sunlight(t):
-        solar = solar_max_power
+    if in_sunlight(i):
+        solar = P_max * solar_incidence_factor(i)
     else:
         solar = 0
 
-    load = get_mode(t)
+    load = get_load(i)
 
-    # Net power
-    net_power = solar - load
+    # energy over timestep (Wh)
+    net = (solar - load) * (dt / 60)
 
-    # Convert W → Wh over timestep
-    battery_energy += net_power * (dt / 60)
+    # battery update with efficiency
+    if net > 0:
+        battery_energy += net * battery_efficiency
+    else:
+        battery_energy += net / battery_efficiency
 
-    # Clamp battery
+    # clamp
     battery_energy = max(0, min(battery_capacity_Wh, battery_energy))
 
-    # Store
-    battery_history.append(battery_energy)
-    solar_history.append(solar)
-    load_history.append(load)
+    soc.append(battery_energy)
+    solar_trace.append(solar)
+    load_trace.append(load)
 
-# ----------------------------
-# PLOT RESULTS
-# ----------------------------
-plt.figure()
+# =========================
+# RESULTS
+# =========================
+plt.figure(figsize=(10,6))
 
-plt.plot(time, battery_history, label="Battery Energy (Wh)")
-plt.plot(time, solar_history, label="Solar Power (W)")
-plt.plot(time, load_history, label="Load Power (W)")
+plt.plot(t, soc, label="Battery SOC (Wh)")
+plt.plot(t, solar_trace, label="Solar Power (W)")
+plt.plot(t, load_trace, label="Load Power (W)")
 
 plt.xlabel("Time (minutes)")
-plt.legend()
-plt.title("3U CubeSat Power Model (1 Orbit)")
+plt.title("3U CubeSat Power Simulation (Realistic Model)")
 plt.grid()
+plt.legend()
 
 plt.show()
+
+# =========================
+# METRICS
+# =========================
+print("Max Battery:", max(soc))
+print("Min Battery:", min(soc))
+print("End Battery:", soc[-1])
