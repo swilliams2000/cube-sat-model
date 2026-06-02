@@ -1,144 +1,151 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-# =========================
-# MISSION SETUP
-# =========================
-DAYS = 365
-ORBITS_PER_DAY = 15
-TOTAL_ORBITS = DAYS * ORBITS_PER_DAY
+# =====================================
+# MISSION PARAMETERS
+# =====================================
 
-# =========================
-# CONSTANTS
-# =========================
-SOLAR_FLUX = 1361
+MISSION_DAYS = 365
 
-# =========================
-# DESIGN VARIABLES (THIS IS THE KEY DIFFERENCE)
-# =========================
-solar_area = 0.06        # m^2 (we will test feasibility)
-battery_capacity = 20.0   # Wh
+# =====================================
+# SOLAR SYSTEM
+# =====================================
 
+SOLAR_FLUX = 1361  # W/m²
+
+solar_area = 0.06      # m²
 solar_eff = 0.28
-system_loss = 0.90
+system_eff = 0.90
 
-solar_degradation = 0.20  # 20% loss over mission (EOL)
-battery_degradation = 0.15 # 15% loss over mission
+initial_solar_power = (
+    SOLAR_FLUX *
+    solar_area *
+    solar_eff *
+    system_eff
+)
 
-# =========================
-# LOAD MODEL
-# =========================
-def load_profile(orbit):
-    base = 6  # OBC + ADCS + idle comms
+# =====================================
+# BATTERY
+# =====================================
 
-    # comms every 5 orbits
-    comms = 8 if orbit % 5 == 0 else 0.5
+initial_battery_capacity = 20.0  # Wh
 
-    # payload every 20 orbits
-    payload = 5 if orbit % 20 == 0 else 0
+battery_energy = 16.0  # start at 80%
 
-    return base + comms + payload
+# =====================================
+# LOADS
+# =====================================
 
-# =========================
-# SOLAR MODEL
-# =========================
-def solar_power(orbit):
-    # simple seasonal/orientation variation
-    geometry_factor = 0.65 + 0.25 * np.sin(orbit / 80)
+average_load = 8.0  # W
 
-    # degrade linearly over life
-    degradation_factor = 1 - solar_degradation * (orbit / TOTAL_ORBITS)
+# =====================================
+# ORBITAL ASSUMPTIONS
+# =====================================
 
-    P = SOLAR_FLUX * solar_area * solar_eff * system_loss
-    return P * geometry_factor * degradation_factor
+orbits_per_day = 15
 
-# =========================
-# BATTERY STATE
-# =========================
-soc = 0.8 * battery_capacity
+sunlight_hours_per_orbit = 60 / 60
+eclipse_hours_per_orbit = 35 / 60
 
-soc_history = []
+sunlight_hours_per_day = (
+    sunlight_hours_per_orbit *
+    orbits_per_day
+)
 
-min_soc = 1e9
-max_soc = -1e9
+# =====================================
+# STORAGE
+# =====================================
 
-failure = False
+days = []
+soc = []
 
-# =========================
-# SIMULATION (ORBIT BY ORBIT ENERGY BALANCE)
-# =========================
-for orbit in range(TOTAL_ORBITS):
+# =====================================
+# DAILY SIMULATION
+# =====================================
 
-    # effective battery capacity decreases over time
-    current_capacity = battery_capacity * (
-        1 - battery_degradation * (orbit / TOTAL_ORBITS)
+for day in range(MISSION_DAYS):
+
+    # Solar degradation
+    solar_degradation = 1 - 0.20 * (day / MISSION_DAYS)
+
+    # Battery degradation
+    battery_capacity = (
+        initial_battery_capacity *
+        (1 - 0.15 * (day / MISSION_DAYS))
     )
 
-    solar = solar_power(orbit)
+    # Seasonal illumination variation
+    seasonal_factor = (
+        0.9 +
+        0.1 * np.sin(
+            2 * np.pi * day / 365
+        )
+    )
 
-    load = load_profile(orbit)
+    solar_power = (
+        initial_solar_power *
+        solar_degradation *
+        seasonal_factor
+    )
 
-    # assume orbit average:
-    sun_fraction = 0.65
+    # Daily energy generated
+    energy_generated = (
+        solar_power *
+        sunlight_hours_per_day
+    )
 
-    solar_energy = solar * sun_fraction
-    load_energy = load
+    # Daily energy consumed
+    energy_consumed = (
+        average_load *
+        24
+    )
 
-    net_energy = solar_energy - load_energy
+    net_energy = (
+        energy_generated -
+        energy_consumed
+    )
 
-    # battery update
-    if net_energy > 0:
-        soc += net_energy * 0.92
-    else:
-        soc += net_energy / 0.92
+    battery_energy += net_energy
 
-    # clamp
-    soc = max(0, min(current_capacity, soc))
+    battery_energy = max(
+        0,
+        min(
+            battery_capacity,
+            battery_energy
+        )
+    )
 
-    soc_history.append(soc)
+    days.append(day)
+    soc.append(battery_energy)
 
-    min_soc = min(min_soc, soc)
-    max_soc = max(max_soc, soc)
-
-    # FAILURE CONDITION
-    if soc <= 0:
-        failure = True
-
-# =========================
+# =====================================
 # RESULTS
-# =========================
-time_days = np.arange(TOTAL_ORBITS) / ORBITS_PER_DAY
+# =====================================
 
 plt.figure(figsize=(12,6))
-plt.plot(time_days, soc_history)
 
-plt.xlabel("Mission Time (Days)")
-plt.ylabel("Battery State of Charge (Wh)")
-plt.title("CubeSat Design Tool v2 — 1 Year Feasibility Check")
+plt.plot(days, soc)
+
+plt.title(
+    "3U CubeSat Battery State of Charge Over 1 Year"
+)
+
+plt.xlabel("Mission Day")
+plt.ylabel("Battery Energy (Wh)")
 plt.grid()
+
 plt.show()
 
-# =========================
-# DESIGN CHECK OUTPUT
-# =========================
-print("\n===== MISSION ASSESSMENT =====")
-print(f"Min SOC: {min_soc:.2f} Wh")
-print(f"Max SOC: {max_soc:.2f} Wh")
-print(f"Final SOC: {soc:.2f} Wh")
+# =====================================
+# METRICS
+# =====================================
 
-if failure:
-    print("❌ MISSION FAILURE: Battery depletion occurred")
+print("\n===== RESULTS =====")
+print(f"Initial SOC: {soc[0]:.2f} Wh")
+print(f"Final SOC:   {soc[-1]:.2f} Wh")
+print(f"Minimum SOC: {min(soc):.2f} Wh")
+
+if min(soc) <= 0:
+    print("❌ Mission failed")
 else:
-    print("✅ MISSION SUCCESS: Power-positive over full mission")
-
-# SIMPLE DESIGN MARGIN METRIC
-margin = min_soc / battery_capacity
-
-print(f"Energy Margin: {margin:.2f}")
-
-if margin < 0.2:
-    print("⚠️ LOW MARGIN DESIGN")
-elif margin < 0.4:
-    print("🟡 MODERATE MARGIN")
-else:
-    print("🟢 ROBUST DESIGN")
+    print("✅ Mission survived")
