@@ -2,52 +2,51 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # =========================
-# ORBIT PARAMETERS
+# MISSION PARAMETERS
 # =========================
-orbit_period_min = 95
-dt = 1  # minute resolution
-t = np.arange(0, orbit_period_min, dt)
+days = 365
+orbits_per_day = 15  # ~95 min orbit
+total_orbits = days * orbits_per_day
 
-sunlight_duration = 60  # min
-eclipse_duration = orbit_period_min - sunlight_duration
+dt_orbit = 1  # orbit-level timestep
 
 # =========================
-# SOLAR ARRAY MODEL
+# INITIAL SYSTEM PARAMETERS
 # =========================
-solar_flux = 1361  # W/m^2
-area = 0.06  # m^2 (3U body-mounted estimate)
+solar_flux = 1361
+area = 0.06
 efficiency = 0.28
-degradation = 0.80
 system_loss = 0.90
 
-P_max = solar_flux * area * efficiency * degradation * system_loss
-
-# =========================
-# BATTERY MODEL
-# =========================
 battery_capacity_Wh = 20
 battery_energy = 0.8 * battery_capacity_Wh
-battery_efficiency = 0.92
+
+# degradation assumptions (realistic)
+solar_degradation_rate = 0.0005  # ~0.05% per orbit (~~15%/year)
+battery_degradation_rate = 0.0002
 
 # =========================
-# LOAD MODEL (REALISTIC MODES)
+# STORAGE
 # =========================
+soc = []
+solar_history = []
+load_history = []
+orbit_index = []
 
-def in_sunlight(time):
-    return time < sunlight_duration
+# =========================
+# LOAD MODEL (same logic, orbit-based)
+# =========================
+def get_load(orbit):
+    base = 6  # OBC + ADCS + idle comms
 
-def get_load(time):
-    # Always-on systems
-    base = 2 + 3 + 1  # OBC + ADCS + idle comms
-
-    # Communication window
-    if 20 <= time < 35:
+    # periodic comms every 5 orbits
+    if orbit % 5 == 0:
         comms = 8
     else:
         comms = 0.5
 
-    # Payload duty cycle
-    if 50 <= time < 55:
+    # payload every 20 orbits
+    if orbit % 20 == 0:
         payload = 5
     else:
         payload = 0
@@ -55,62 +54,64 @@ def get_load(time):
     return base + comms + payload
 
 # =========================
-# SOLAR INCIDENCE MODEL
+# SOLAR MODEL
 # =========================
-def solar_incidence_factor(time):
-    if not in_sunlight(time):
-        return 0
+def solar_power(orbit, degraded_efficiency):
+    # simple seasonal/orbit variation (beta angle proxy)
+    angle_factor = 0.7 + 0.3 * np.sin(orbit / 50)
 
-    # simple cosine variation over sunlight period
-    angle = (time / sunlight_duration) * np.pi
-    return max(0, np.cos(angle))
+    P_max = solar_flux * area * degraded_efficiency * system_loss
 
-# =========================
-# STORAGE
-# =========================
-soc = []
-solar_trace = []
-load_trace = []
+    return P_max * angle_factor
 
 # =========================
-# SIMULATION LOOP
+# SIMULATION LOOP (FULL YEAR)
 # =========================
-for i in t:
+for orbit in range(total_orbits):
 
-    if in_sunlight(i):
-        solar = P_max * solar_incidence_factor(i)
-    else:
-        solar = 0
+    # degrade system over time
+    eff = efficiency * (1 - solar_degradation_rate * orbit)
 
-    load = get_load(i)
+    batt_capacity = battery_capacity_Wh * (1 - battery_degradation_rate * orbit)
 
-    # energy over timestep (Wh)
-    net = (solar - load) * (dt / 60)
+    solar = solar_power(orbit, eff)
 
-    # battery update with efficiency
+    load = get_load(orbit)
+
+    # assume orbit-averaged sunlight fraction (~0.65)
+    sun_fraction = 0.65
+
+    solar_energy = solar * sun_fraction
+    load_energy = load  # per orbit average W ~ Wh per orbit unitized
+
+    net = (solar_energy - load_energy)
+
+    # battery update
     if net > 0:
-        battery_energy += net * battery_efficiency
+        battery_energy += net * 0.92
     else:
-        battery_energy += net / battery_efficiency
+        battery_energy += net / 0.92
 
     # clamp
-    battery_energy = max(0, min(battery_capacity_Wh, battery_energy))
+    battery_energy = max(0, min(batt_capacity, battery_energy))
 
+    # store
     soc.append(battery_energy)
-    solar_trace.append(solar)
-    load_trace.append(load)
+    solar_history.append(solar_energy)
+    load_history.append(load_energy)
+    orbit_index.append(orbit)
 
 # =========================
 # RESULTS
 # =========================
-plt.figure(figsize=(10,6))
+time_days = np.array(orbit_index) / orbits_per_day
 
-plt.plot(t, soc, label="Battery SOC (Wh)")
-plt.plot(t, solar_trace, label="Solar Power (W)")
-plt.plot(t, load_trace, label="Load Power (W)")
+plt.figure(figsize=(12,6))
 
-plt.xlabel("Time (minutes)")
-plt.title("3U CubeSat Power Simulation (Realistic Model)")
+plt.plot(time_days, soc, label="Battery SOC (Wh)")
+plt.xlabel("Mission Time (Days)")
+plt.ylabel("Battery Energy (Wh)")
+plt.title("3U CubeSat Full-Year Power Simulation (EOL + Degradation)")
 plt.grid()
 plt.legend()
 
@@ -122,3 +123,9 @@ plt.show()
 print("Max Battery:", max(soc))
 print("Min Battery:", min(soc))
 print("End Battery:", soc[-1])
+
+# failure detection
+if min(soc) <= 0:
+    print("⚠️ MISSION FAILURE: Battery depletion occurred")
+else:
+    print("✅ Mission survives full year under assumptions")
