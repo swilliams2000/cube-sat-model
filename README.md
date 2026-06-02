@@ -267,6 +267,59 @@ The simulation evaluates:
 
 ---
 
+# Visualization Outputs
+
+The model generates three mission-duration views.
+
+## 1 Week Analysis
+
+Purpose:
+
+- Verify eclipse survival
+- Verify initial charging behavior
+- Validate mission mode transitions
+
+Outputs:
+
+- Battery State of Charge
+- Daily Energy Margin
+- Solar Generation
+- Energy Consumption
+
+---
+
+## 1 Month Analysis
+
+Purpose:
+
+- Verify medium-term energy balance
+- Observe impact of operational schedules
+- Evaluate charging/discharging trends
+
+Outputs:
+
+- Battery State of Charge
+- Daily Energy Margin
+- Solar Generation
+- Energy Consumption
+
+---
+
+## 1 Year Analysis
+
+Purpose:
+
+- Evaluate end-of-life performance
+- Verify power-positive operation
+- Quantify degradation impacts
+
+Outputs:
+
+- Battery State of Charge
+- Remaining Capacity
+- Minimum SOC
+- End-of-Life Energy Margin
+
 # Key Engineering Questions
 
 1. Does the spacecraft remain power-positive for one year?

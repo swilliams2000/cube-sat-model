@@ -1,151 +1,346 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-# =====================================
+# =====================================================
 # MISSION PARAMETERS
-# =====================================
+# =====================================================
 
 MISSION_DAYS = 365
 
-# =====================================
-# SOLAR SYSTEM
-# =====================================
+ORBIT_PERIOD_MIN = 95
+SUNLIGHT_MIN = 60
+ECLIPSE_MIN = 35
+ORBITS_PER_DAY = 15
+
+# =====================================================
+# SOLAR ARRAY
+# =====================================================
 
 SOLAR_FLUX = 1361  # W/m²
 
-solar_area = 0.06      # m²
-solar_eff = 0.28
-system_eff = 0.90
+SOLAR_AREA = 0.06  # m²
+CELL_EFFICIENCY = 0.28
+SYSTEM_EFFICIENCY = 0.90
 
-initial_solar_power = (
-    SOLAR_FLUX *
-    solar_area *
-    solar_eff *
-    system_eff
+SOLAR_EOL_LOSS = 0.20  # 20% loss over mission
+
+P_SOLAR_MAX = (
+    SOLAR_FLUX
+    * SOLAR_AREA
+    * CELL_EFFICIENCY
+    * SYSTEM_EFFICIENCY
 )
 
-# =====================================
+# =====================================================
 # BATTERY
-# =====================================
+# =====================================================
 
-initial_battery_capacity = 20.0  # Wh
+BATTERY_CAPACITY = 22.0  # Wh
 
-battery_energy = 16.0  # start at 80%
+BATTERY_EOL_LOSS = 0.15
 
-# =====================================
-# LOADS
-# =====================================
+INITIAL_SOC = 0.80
 
-average_load = 8.0  # W
+# =====================================================
+# SUBSYSTEMS
+# =====================================================
 
-# =====================================
-# ORBITAL ASSUMPTIONS
-# =====================================
+OBC_POWER = 1.5
 
-orbits_per_day = 15
+ADCS_POWER = 3.0
 
-sunlight_hours_per_orbit = 60 / 60
-eclipse_hours_per_orbit = 35 / 60
+RADIO_IDLE = 0.5
+RADIO_TX = 8.0
 
-sunlight_hours_per_day = (
-    sunlight_hours_per_orbit *
-    orbits_per_day
-)
+PAYLOAD_POWER = 5.0
 
-# =====================================
-# STORAGE
-# =====================================
+# =====================================================
+# ORBIT LEVEL SIMULATION
+# =====================================================
 
-days = []
-soc = []
+orbit_minutes = np.arange(ORBIT_PERIOD_MIN)
 
-# =====================================
-# DAILY SIMULATION
-# =====================================
+battery = BATTERY_CAPACITY * INITIAL_SOC
+
+orbit_soc = []
+orbit_solar = []
+orbit_load = []
+
+for minute in orbit_minutes:
+
+    # -----------------------------------
+    # Solar Model
+    # -----------------------------------
+
+    if minute < SUNLIGHT_MIN:
+
+        solar_factor = np.sin(
+            np.pi * minute / SUNLIGHT_MIN
+        )
+
+        solar_power = P_SOLAR_MAX * solar_factor
+
+    else:
+
+        solar_power = 0
+
+    # -----------------------------------
+    # Base Load
+    # -----------------------------------
+
+    load = (
+        OBC_POWER
+        + ADCS_POWER
+        + RADIO_IDLE
+    )
+
+    # -----------------------------------
+    # Downlink Window
+    # -----------------------------------
+
+    if 20 <= minute <= 30:
+        load += RADIO_TX
+
+    # -----------------------------------
+    # Imaging Window
+    # -----------------------------------
+
+    if 40 <= minute <= 45:
+        load += PAYLOAD_POWER
+
+    # -----------------------------------
+    # Battery Update
+    # -----------------------------------
+
+    battery += (solar_power - load) / 60
+
+    battery = max(
+        0,
+        min(BATTERY_CAPACITY, battery)
+    )
+
+    orbit_soc.append(battery)
+    orbit_solar.append(solar_power)
+    orbit_load.append(load)
+
+# =====================================================
+# YEAR SIMULATION
+# =====================================================
+
+battery = BATTERY_CAPACITY * INITIAL_SOC
+
+soc_year = []
 
 for day in range(MISSION_DAYS):
 
+    # -----------------------------------
     # Solar degradation
-    solar_degradation = 1 - 0.20 * (day / MISSION_DAYS)
+    # -----------------------------------
 
-    # Battery degradation
-    battery_capacity = (
-        initial_battery_capacity *
-        (1 - 0.15 * (day / MISSION_DAYS))
+    solar_degradation = (
+        1
+        - SOLAR_EOL_LOSS * (day / MISSION_DAYS)
     )
 
+    # -----------------------------------
+    # Battery degradation
+    # -----------------------------------
+
+    battery_capacity_today = (
+        BATTERY_CAPACITY
+        * (
+            1
+            - BATTERY_EOL_LOSS
+            * (day / MISSION_DAYS)
+        )
+    )
+
+    # -----------------------------------
     # Seasonal illumination variation
+    # -----------------------------------
+
     seasonal_factor = (
-        0.9 +
-        0.1 * np.sin(
+        0.95
+        + 0.05
+        * np.sin(
             2 * np.pi * day / 365
         )
     )
 
-    solar_power = (
-        initial_solar_power *
-        solar_degradation *
-        seasonal_factor
+    # -----------------------------------
+    # Average daily solar energy
+    # -----------------------------------
+
+    avg_solar_power = (
+        12
+        * solar_degradation
+        * seasonal_factor
     )
 
-    # Daily energy generated
     energy_generated = (
-        solar_power *
-        sunlight_hours_per_day
+        avg_solar_power
+        * (
+            SUNLIGHT_MIN / 60
+        )
+        * ORBITS_PER_DAY
     )
 
-    # Daily energy consumed
+    # -----------------------------------
+    # Daily load estimate
+    # -----------------------------------
+
+    avg_load = 7.5
+
     energy_consumed = (
-        average_load *
-        24
+        avg_load * 24
     )
+
+    # -----------------------------------
+    # Battery Update
+    # -----------------------------------
 
     net_energy = (
-        energy_generated -
-        energy_consumed
+        energy_generated
+        - energy_consumed
     )
 
-    battery_energy += net_energy
+    battery += net_energy / 50
 
-    battery_energy = max(
+    battery = max(
         0,
         min(
-            battery_capacity,
-            battery_energy
+            battery_capacity_today,
+            battery
         )
     )
 
-    days.append(day)
-    soc.append(battery_energy)
+    soc_year.append(battery)
 
-# =====================================
-# RESULTS
-# =====================================
+# =====================================================
+# PLOTS
+# =====================================================
+
+# -----------------------------------
+# 1 ORBIT
+# -----------------------------------
 
 plt.figure(figsize=(12,6))
 
-plt.plot(days, soc)
-
-plt.title(
-    "3U CubeSat Battery State of Charge Over 1 Year"
+plt.plot(
+    orbit_minutes,
+    orbit_solar,
+    label="Solar Power (W)"
 )
 
-plt.xlabel("Mission Day")
-plt.ylabel("Battery Energy (Wh)")
-plt.grid()
+plt.plot(
+    orbit_minutes,
+    orbit_load,
+    label="Load Power (W)"
+)
+
+plt.plot(
+    orbit_minutes,
+    orbit_soc,
+    label="Battery SOC (Wh)"
+)
+
+plt.title("Single Orbit Analysis")
+
+plt.xlabel("Orbit Minute")
+plt.ylabel("Power / Energy")
+
+plt.grid(True)
+
+plt.legend()
 
 plt.show()
 
-# =====================================
-# METRICS
-# =====================================
+# -----------------------------------
+# 1 WEEK
+# -----------------------------------
 
-print("\n===== RESULTS =====")
-print(f"Initial SOC: {soc[0]:.2f} Wh")
-print(f"Final SOC:   {soc[-1]:.2f} Wh")
-print(f"Minimum SOC: {min(soc):.2f} Wh")
+plt.figure(figsize=(12,6))
 
-if min(soc) <= 0:
-    print("❌ Mission failed")
+plt.plot(
+    np.arange(7),
+    soc_year[:7],
+    marker="o"
+)
+
+plt.title("Battery State of Charge - First Week")
+
+plt.xlabel("Mission Day")
+plt.ylabel("Battery Energy (Wh)")
+
+plt.grid(True)
+
+plt.show()
+
+# -----------------------------------
+# 1 MONTH
+# -----------------------------------
+
+plt.figure(figsize=(12,6))
+
+plt.plot(
+    np.arange(30),
+    soc_year[:30]
+)
+
+plt.title("Battery State of Charge - First Month")
+
+plt.xlabel("Mission Day")
+plt.ylabel("Battery Energy (Wh)")
+
+plt.grid(True)
+
+plt.show()
+
+# -----------------------------------
+# 1 YEAR
+# -----------------------------------
+
+plt.figure(figsize=(12,6))
+
+plt.plot(
+    np.arange(MISSION_DAYS),
+    soc_year
+)
+
+plt.title("Battery State of Charge - One Year Mission")
+
+plt.xlabel("Mission Day")
+plt.ylabel("Battery Energy (Wh)")
+
+plt.grid(True)
+
+plt.show()
+
+# =====================================================
+# RESULTS
+# =====================================================
+
+print("\n============================")
+print("MISSION RESULTS")
+print("============================")
+
+print(
+    f"Initial SOC: {soc_year[0]:.2f} Wh"
+)
+
+print(
+    f"Final SOC: {soc_year[-1]:.2f} Wh"
+)
+
+print(
+    f"Minimum SOC: {min(soc_year):.2f} Wh"
+)
+
+if min(soc_year) > 0:
+    print("✅ Mission Survives 1 Year")
 else:
-    print("✅ Mission survived")
+    print("❌ Mission Failure")
+
+print(
+    f"Solar Array Peak Power: {P_SOLAR_MAX:.2f} W"
+)
