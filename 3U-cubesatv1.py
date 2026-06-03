@@ -171,7 +171,8 @@ for day in range(MISSION_DAYS):
     )
 
     avg_solar_power = (
-        12
+        P_SOLAR_MAX 
+        * 0.45
         * solar_degradation
         * seasonal_factor
     )
